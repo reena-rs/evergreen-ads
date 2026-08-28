@@ -1,8 +1,8 @@
 # Reena's Workout Plan
 
-Single-user daily training and recovery dashboard. Phase 1 (per the PRD): daily
-feed, workout log, manual macro/step/recovery entry, and progress trends — no
-external integrations yet.
+Single-user daily training and recovery dashboard. Daily feed, workout log,
+macro/step tracking, progress trends, plus a real Oura sync and a Garmin CSV
+importer — per the PRD's Phase 1 core app and Phase 2/3 integrations.
 
 Stack: Next.js (App Router) + Tailwind CSS + hand-rolled shadcn-style
 components + Supabase (Postgres, Auth, RLS) + Recharts, per the PRD's
@@ -11,9 +11,10 @@ recommended stack.
 ## 1. Create a Supabase project
 
 1. Create a new project at [supabase.com](https://supabase.com).
-2. In **Project Settings → API**, copy the **Project URL** and **anon public**
-   key.
-3. Copy `.env.example` to `.env.local` and fill them in:
+2. In **Project Settings → API**, copy the **Project URL**, **anon public**
+   key, and **service_role** key (the service role key is only used
+   server-side by the Oura sync job — never expose it to the browser).
+3. Copy `.env.example` to `.env.local` and fill in the Supabase values:
 
    ```bash
    cp .env.example .env.local
@@ -21,7 +22,7 @@ recommended stack.
 
 ## 2. Run the migrations
 
-In the Supabase dashboard's **SQL Editor**, run the two files in
+In the Supabase dashboard's **SQL Editor**, run the files in
 `supabase/migrations/` in order:
 
 1. `0001_init.sql` — tables, RLS policies, triggers
@@ -38,7 +39,51 @@ This is a single-user app — there's no public sign-up flow. In the Supabase
 dashboard, go to **Authentication → Users → Add user** and create yourself an
 email/password account. Sign in with those credentials at `/login`.
 
-## 4. Run it
+## 4. Set up Oura (optional, but this is the "real data" integration)
+
+1. Register an API application at
+   [cloud.ouraring.com/oauth/applications](https://cloud.ouraring.com/oauth/applications).
+2. Add both redirect URIs so it works locally and once deployed:
+   - `http://localhost:3000/api/integrations/oura/callback`
+   - `https://<your-vercel-domain>/api/integrations/oura/callback`
+3. Put the Client ID/Secret into `.env.local` as `OURA_CLIENT_ID` /
+   `OURA_CLIENT_SECRET`.
+4. Generate a token encryption key and put it in `.env.local` as
+   `TOKEN_ENCRYPTION_KEY`:
+
+   ```bash
+   openssl rand -hex 32
+   ```
+5. Sign in to the app, go to **Settings**, and click **Connect Oura**.
+
+Once connected, `/api/cron/sync` refreshes tokens as needed and pulls the
+last few days of sleep score, readiness score, HRV, resting HR, and
+temperature deviation into `recovery_data(source='oura')`. There's also a
+**Sync now** button in Settings for testing without waiting on the schedule.
+
+### The scheduled sync
+
+`vercel.json` configures a daily cron hitting `/api/cron/sync` at 11:00 UTC
+(~6-7am US Eastern, adjust to taste) — Vercel's Hobby tier supports one
+cron run per day, which is all this needs. Set `CRON_SECRET` in both
+`.env.local` and your Vercel project's env vars so the endpoint only accepts
+requests carrying that secret (Vercel Cron sends it automatically once set).
+
+## 5. Garmin — CSV import, not live sync
+
+Garmin Connect's real-time API requires applying to their Developer Program
+(explicitly scoped for business use, 1-4 week review, not guaranteed for a
+personal project — see the PRD §7/§11). Rather than block on that approval,
+Settings has a CSV importer: export a report from Garmin Connect (Account
+Settings → Export Your Data, or an individual report's CSV export — Sleep,
+Heart Rate, Steps) and upload it. The importer matches common column-name
+variants for date, resting heart rate, HRV, sleep score, steps, and weight,
+and writes into `recovery_data(source='garmin')` / `daily_metrics`.
+
+If you want live Garmin OAuth later, apply at Garmin's Connect Developer
+Program portal — that's a business-facing application only you can submit.
+
+## 6. Run it
 
 ```bash
 npm install
@@ -50,11 +95,11 @@ your weekly split (Push/Solidcore/Pull/Solidcore/Legs/Push/Rest) and macro
 target (125P/160C/57F, 12,000 step goal) — edit both anytime on the Settings
 page.
 
-## What's here (Phase 1)
+## What's here
 
 - **Daily Feed** (`/`) — today's workout (editable), macro target vs. logged,
-  manual recovery inputs (sleep quality/HRV/resting HR), steps vs. goal, a
-  freeform note.
+  recovery (auto-filled from Oura once connected, plus manual sleep
+  quality/notes), steps vs. goal, a freeform note.
 - **Workouts** (`/workouts`) — edit the standing weekly template, log
   sets/reps/weight/supersets for any date, mark rest/active recovery.
   `/workouts/history` charts top-set weight per exercise over time.
@@ -62,31 +107,29 @@ page.
   constraint tags shown as a reference (not enforced).
 - **Progress** (`/progress`) — 7/30/90-day weight trend, weekly training
   consistency, weekly macro adherence (% of logged days within 10% of kcal
-  target), and recovery trend.
-- **Settings** (`/settings`) — edit macro targets/step goal (versioned —
-  changes apply from today forward, past days keep their original target),
-  diet tags, profile; CSV export of all your data.
+  target), and recovery trend (merged across manual/Oura/Garmin sources).
+- **Settings** (`/settings`) — macro targets/step goal (versioned), diet
+  tags, profile, CSV export, Oura connect/disconnect + sync status, Garmin
+  CSV importer.
 
-## What's *not* here yet (Phases 2-3, per the PRD)
+## Cal AI — still no path in
 
-- **Oura** — Phase 2. Self-serve OAuth2, no approval gate. Not implemented in
-  this codebase yet; `integration_tokens` table exists in the schema so
-  Phase 2 doesn't need a migration.
-- **Garmin** — Phase 3, conditional on Garmin Connect Developer Program
-  approval (explicitly scoped for business use — apply early, in parallel,
-  not as a Phase 1 blocker). Fallback is manual CSV import from Garmin
-  Connect's account-settings export if rejected.
-- **Cal AI** — no public API or data export exists. Macro entry stays manual
-  in this app (you're already generating the numbers in Cal AI, so it's a
-  copy-over). Revisit if that changes.
+No public API or documented data export exists for Cal AI. Macro entry
+stays manual (you're already generating the numbers there, so it's a
+copy-over). The PRD's alternative, if auto-sync becomes a hard requirement,
+is switching to an app with a real API (Cronometer, MyFitnessPal).
 
-### Security notes before building Phase 2/3
+## Security notes
 
-`integration_tokens` stores OAuth tokens in plain columns today. Before
-writing real tokens into it, add encryption at rest (e.g. Supabase Vault /
-`pgsodium`, or application-level encryption before insert) — the PRD calls
-this out explicitly (§9) since these are your personal health/wearable
-credentials, not just app data.
+- OAuth tokens (`integration_tokens`) are encrypted at rest with
+  AES-256-GCM (`src/lib/crypto.ts`) using `TOKEN_ENCRYPTION_KEY` — not
+  stored in plaintext.
+- The scheduled sync job (`/api/cron/sync`) uses the Supabase **service
+  role** key (`SUPABASE_SERVICE_ROLE_KEY`) since it has no logged-in browser
+  session to carry an RLS-scoped JWT. It's used only server-side, in that one
+  route and the shared sync helper — never bundled into client code.
+- Set `CRON_SECRET` in production so the sync endpoint can't be triggered by
+  anyone who finds the URL.
 
 ## Known limitations (intentional, for a v1)
 
@@ -97,9 +140,16 @@ credentials, not just app data.
 - Macro adherence tolerance (±10% of kcal target) is hardcoded in
   `src/lib/progress.ts` — change `tolerancePct` there if you want a tighter
   or looser bar.
+- Garmin CSV column matching is best-effort against known Garmin Connect
+  export variants — if a file doesn't match, the importer reports which
+  fields it couldn't find rather than guessing.
 
 ## Deploying
 
 Push to a Git repo and import into [Vercel](https://vercel.com/new), setting
-the two `NEXT_PUBLIC_SUPABASE_*` env vars in the project settings. No other
-backend to stand up — Next.js API routes talk to Supabase directly.
+**Root Directory** to `workout-dashboard` and these env vars in the project
+settings: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `OURA_CLIENT_ID`, `OURA_CLIENT_SECRET`,
+`TOKEN_ENCRYPTION_KEY`, `CRON_SECRET`. No other backend to stand up —
+Next.js API routes and the Vercel Cron job talk to Supabase and Oura
+directly.
