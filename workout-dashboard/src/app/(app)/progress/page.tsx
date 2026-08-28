@@ -40,9 +40,8 @@ export default async function ProgressPage({
       .order("date"),
     supabase
       .from("recovery_data")
-      .select("date, resting_hr, hrv, sleep_quality")
+      .select("date, source, resting_hr, hrv, sleep_quality")
       .eq("user_id", user.id)
-      .eq("source", "manual")
       .gte("date", startDate)
       .order("date"),
     supabase
@@ -68,12 +67,24 @@ export default async function ProgressPage({
     .filter((m) => m.weight != null)
     .map((m) => ({ date: m.date, weight: Number(m.weight) }));
 
-  const recoverySeries = (recoveryRes.data ?? []).map((r) => ({
-    date: r.date,
-    restingHr: r.resting_hr,
-    hrv: r.hrv,
-    sleepQuality: r.sleep_quality,
-  }));
+  // resting HR / HRV are directly comparable across sources (bpm / ms), so
+  // merge them with oura > garmin > manual priority when more than one
+  // source has an entry for the same day. sleep_quality is a 1-5 subjective
+  // manual-only field — it stays manual-only rather than mixing with Oura's
+  // 0-100 sleep score, which the chart isn't scaled for.
+  const SOURCE_PRIORITY = { oura: 0, garmin: 1, manual: 2 } as const;
+  const recoveryByDate = new Map<
+    string,
+    { date: string; restingHr: number | null; hrv: number | null; sleepQuality: number | null }
+  >();
+  for (const r of (recoveryRes.data ?? []).slice().sort((a, b) => SOURCE_PRIORITY[b.source] - SOURCE_PRIORITY[a.source])) {
+    const row = recoveryByDate.get(r.date) ?? { date: r.date, restingHr: null, hrv: null, sleepQuality: null };
+    if (r.resting_hr != null) row.restingHr = r.resting_hr;
+    if (r.hrv != null) row.hrv = r.hrv;
+    if (r.source === "manual" && r.sleep_quality != null) row.sleepQuality = r.sleep_quality;
+    recoveryByDate.set(r.date, row);
+  }
+  const recoverySeries = Array.from(recoveryByDate.values()).sort((a, b) => a.date.localeCompare(b.date));
 
   const templateByDow = new Map((templateRes.data ?? []).map((t) => [t.day_of_week, t.workout_type]));
   const logStatusByDate = new Map((logsRes.data ?? []).map((l) => [l.date, l.status]));

@@ -28,13 +28,14 @@ export default async function DailyFeedPage() {
   const date = toDateKey(today);
   const dayOfWeek = today.getDay();
 
-  const [template, log, target, macroLog, metrics, recovery, profile] = await Promise.all([
+  const [template, log, target, macroLog, metrics, recovery, ouraRecovery, profile] = await Promise.all([
     getWorkoutTemplate(supabase, user.id),
     getWorkoutLogForDate(supabase, user.id, date),
     getMacroTargetForDate(supabase, user.id, date),
     getMacroLogForDate(supabase, user.id, date),
     getDailyMetricsForDate(supabase, user.id, date),
-    getRecoveryForDate(supabase, user.id, date),
+    getRecoveryForDate(supabase, user.id, date, "manual"),
+    getRecoveryForDate(supabase, user.id, date, "oura"),
     getProfile(supabase, user.id),
   ]);
 
@@ -170,10 +171,21 @@ export default async function DailyFeedPage() {
           <CardHeader>
             <div>
               <CardTitle>Recovery</CardTitle>
-              <CardDescription>Manual today — auto-fills from Oura in Phase 2</CardDescription>
+              <CardDescription>
+                {ouraRecovery ? "Synced from Oura + your subjective notes" : "Manual — connect Oura in Settings to auto-fill"}
+              </CardDescription>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {ouraRecovery ? (
+              <div className="grid grid-cols-2 gap-3 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3 text-sm sm:grid-cols-3">
+                <Stat label="Sleep score" value={ouraRecovery.sleep_score} />
+                <Stat label="Readiness" value={ouraRecovery.readiness_score} />
+                <Stat label="HRV" value={ouraRecovery.hrv} suffix=" ms" />
+                <Stat label="Resting HR" value={ouraRecovery.resting_hr} suffix=" bpm" />
+                <Stat label="Temp deviation" value={ouraRecovery.temperature_deviation} suffix="°" />
+              </div>
+            ) : null}
             <form action={upsertRecovery} className="grid grid-cols-3 gap-3">
               <input type="hidden" name="date" value={date} />
               <div>
@@ -269,6 +281,15 @@ export default async function DailyFeedPage() {
       <p className="text-xs text-neutral-600">
         Diet reference: {profile?.diet_constraints?.join(" · ") ?? "Gluten-free · Minimal dairy · Minimal chicken · Fish-forward"}
       </p>
+    </div>
+  );
+}
+
+function Stat({ label, value, suffix = "" }: { label: string; value: number | null; suffix?: string }) {
+  return (
+    <div>
+      <p className="text-xs text-neutral-500">{label}</p>
+      <p className="font-medium text-neutral-100">{value != null ? `${value}${suffix}` : "—"}</p>
     </div>
   );
 }

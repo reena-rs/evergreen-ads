@@ -1,7 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login"];
+// /api/cron/sync has no browser session to check — Vercel Cron calls it
+// directly with just an Authorization header, and the route itself verifies
+// CRON_SECRET. Everything else (including the Oura OAuth routes) stays
+// behind the normal session check.
+const PUBLIC_PATHS = ["/login", "/api/cron"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

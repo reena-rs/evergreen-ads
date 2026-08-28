@@ -1,12 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
-import { getProfile, getMacroTargetForDate } from "@/lib/data";
+import { getProfile, getMacroTargetForDate, getIntegrationToken } from "@/lib/data";
 import { toDateKey, macroKcal } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { updateMacroTarget, updateProfile } from "@/actions/settings";
+import { disconnectOura } from "@/actions/integrations";
+import { OuraSyncButton } from "@/components/oura-sync-button";
+import { GarminImportForm } from "@/components/garmin-import-form";
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ oura?: string; oura_error?: string }>;
+}) {
+  const { oura: ouraStatus, oura_error: ouraError } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -14,9 +23,10 @@ export default async function SettingsPage() {
   if (!user) return null;
 
   const today = toDateKey(new Date());
-  const [profile, target] = await Promise.all([
+  const [profile, target, ouraToken] = await Promise.all([
     getProfile(supabase, user.id),
     getMacroTargetForDate(supabase, user.id, today),
+    getIntegrationToken(supabase, user.id, "oura"),
   ]);
 
   const proteinTarget = target?.protein_g ?? 125;
@@ -123,22 +133,76 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>Integration status</CardTitle>
-            <CardDescription>Phase 2/3, per the PRD</CardDescription>
+            <CardTitle>Oura</CardTitle>
+            <CardDescription>OAuth2, synced automatically every morning</CardDescription>
+          </div>
+          <Badge variant={ouraToken ? "default" : "outline"}>
+            {ouraToken ? "Connected" : "Not connected"}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {ouraStatus === "connected" ? (
+            <p className="text-sm text-emerald-400">Oura connected — first sync will run shortly.</p>
+          ) : null}
+          {ouraError ? (
+            <p className="text-sm text-amber-400">Couldn&apos;t connect Oura: {ouraError}</p>
+          ) : null}
+
+          {ouraToken ? (
+            <div className="space-y-3">
+              <p className="text-sm text-neutral-400">
+                Last synced:{" "}
+                {ouraToken.last_sync_at
+                  ? new Date(ouraToken.last_sync_at).toLocaleString()
+                  : "not yet — click Sync now"}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <OuraSyncButton />
+                <form action={disconnectOura}>
+                  <Button type="submit" size="sm" variant="destructive">
+                    Disconnect
+                  </Button>
+                </form>
+              </div>
+            </div>
+          ) : (
+            <a href="/api/integrations/oura/authorize">
+              <Button type="button" size="sm">
+                Connect Oura
+              </Button>
+            </a>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Garmin</CardTitle>
+            <CardDescription>
+              CSV import — live OAuth needs Garmin Developer Program approval (see README)
+            </CardDescription>
           </div>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm text-neutral-400">
-          <p>
-            <span className="font-medium text-neutral-200">Oura</span> — not yet connected (Phase 2:
-            self-serve OAuth2, no approval gate).
-          </p>
-          <p>
-            <span className="font-medium text-neutral-200">Garmin</span> — not yet connected (Phase 3:
-            requires Connect Developer Program approval; CSV import is the fallback if rejected).
-          </p>
-          <p>
-            <span className="font-medium text-neutral-200">Cal AI</span> — no integration path exists;
-            macro entry stays manual (see README).
+        <CardContent>
+          <GarminImportForm />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Cal AI</CardTitle>
+            <CardDescription>No integration path exists</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-neutral-400">
+            No public API or data export — macro entry stays manual on the{" "}
+            <a href="/nutrition" className="text-emerald-400 hover:underline">
+              Nutrition
+            </a>{" "}
+            page.
           </p>
         </CardContent>
       </Card>

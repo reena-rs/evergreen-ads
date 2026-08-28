@@ -74,3 +74,17 @@ export async function getProfile(supabase: Client, userId: string) {
   const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
   return data;
 }
+
+export async function getIntegrationToken(
+  supabase: Client,
+  userId: string,
+  service: "oura" | "garmin",
+) {
+  const { data } = await supabase
+    .from("integration_tokens")
+    .select("service, last_sync_at, expires_at")
+    .eq("user_id", userId)
+    .eq("service", service)
+    .maybeSingle();
+  return data;
+}
